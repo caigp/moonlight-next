@@ -46,6 +46,8 @@ public class VideoEncoder implements Runnable {
 
     private IMediaRecord mediaRecord;
 
+    private int width, height;
+
     private final Handler.Callback callback = new Handler.Callback() {
         @Override
         public boolean handleMessage(Message msg) {
@@ -68,18 +70,20 @@ public class VideoEncoder implements Runnable {
         }
     };
 
-    public VideoEncoder(Context context, EGLContext eglContext, IMediaRecord mediaRecord, int texture) {
+    public VideoEncoder(Context context, EGLContext eglContext, IMediaRecord mediaRecord, int texture, int width, int height) {
         this.eglContext = eglContext;
         this.mediaRecord = mediaRecord;
         drawer = new Drawer(context);
         drawer.setTex_id(texture, true);
+        this.width = width;
+        this.height = height;
     }
 
     public void start() throws IOException {
         try {
             mediaCodec = MediaCodec.createEncoderByType("video/avc");
 
-            MediaFormat mediaFormat = MediaFormat.createVideoFormat("video/avc", 1920, 1080);
+            MediaFormat mediaFormat = MediaFormat.createVideoFormat("video/avc", width, height);
             mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
             mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 10000000);
             mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);

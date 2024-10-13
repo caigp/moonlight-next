@@ -4,13 +4,12 @@ import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
-import android.media.MediaScannerConnection;
 import android.opengl.EGL14;
 import android.opengl.EGLContext;
-import android.os.Environment;
 
 import com.su.moonlight.next.record.audio.AudioEncoder;
 import com.su.moonlight.next.record.video.VideoEncoder;
+import com.su.moonlight.next.utils.MediaUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -46,9 +45,9 @@ public class MediaRecord implements IMediaRecord {
         this.texture = texture;
     }
 
-    public void start() throws Exception {
+    public void start(int width, int height) throws Exception {
         if (muxer == null) {
-            file = new File(createRecordPath());
+            file = new File(context.getExternalCacheDir(), System.currentTimeMillis() + ".mp4");
             try {
                 muxer = new MediaMuxer(file.getPath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
             } catch (IOException e) {
@@ -60,7 +59,7 @@ public class MediaRecord implements IMediaRecord {
             audioEncoder.start();
         }
         if (videoEncoder == null) {
-            videoEncoder = new VideoEncoder(context, eglContext, this, texture);
+            videoEncoder = new VideoEncoder(context, eglContext, this, texture, width, height);
             videoEncoder.start();
         }
     }
@@ -108,8 +107,8 @@ public class MediaRecord implements IMediaRecord {
                     checkNeedAudio();
                     muxer.release();
 
-                    MediaScannerConnection.scanFile(context, new String[]{file.getAbsolutePath()}, new String[]{"video/*"}, null);
-                    path = file.getAbsolutePath();
+                    path = MediaUtils.INSTANCE.insertVideo(context, file, "record_" + System.currentTimeMillis(), "record");
+                    file.delete();
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -161,17 +160,4 @@ public class MediaRecord implements IMediaRecord {
         }
     }
 
-    private String createRecordPath() {
-        File sdDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES);
-        if (sdDir != null) {
-            File dir = new File(sdDir.getAbsolutePath());//新建子目录
-            if (!dir.exists()) {
-                dir.mkdirs();
-            }
-            //视频文件的路径
-            String path = dir.getAbsolutePath() + "/" + System.currentTimeMillis() + ".mp4";
-            return path;
-        }
-        return null;
-    }
 }

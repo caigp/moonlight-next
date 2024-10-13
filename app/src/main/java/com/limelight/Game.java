@@ -33,7 +33,6 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Message;
 import android.preference.PreferenceManager;
-import android.provider.MediaStore;
 import android.util.Rational;
 import android.view.Display;
 import android.view.Gravity;
@@ -109,6 +108,7 @@ import com.su.moonlight.next.gl.EglHelper;
 import com.su.moonlight.next.gl.GLUtils;
 import com.su.moonlight.next.gl.TextureHelper;
 import com.su.moonlight.next.record.MediaRecord;
+import com.su.moonlight.next.utils.MediaUtils;
 
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -3438,9 +3438,9 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
             case EGL_READ_PIXELS:
                 int width = streamView.getWidth();
                 int height = streamView.getHeight();
-                Bitmap dest = GLUtils.INSTANCE.readPixels(width, height);
+                Bitmap dest = GLUtils.INSTANCE.readPixels(width, height, decoderRenderer.getInitialWidth(), decoderRenderer.getInitialHeight());
 
-                String url = MediaStore.Images.Media.insertImage(getContentResolver(), dest, String.valueOf(System.currentTimeMillis()), "screenshot");
+                String url = MediaUtils.INSTANCE.insertImage(Game.this, dest, "screenshot_" + System.currentTimeMillis(), "screenshot");
                 if (url == null) {
                     Toast.makeText(Game.this, getString(R.string.insert_image_error), Toast.LENGTH_LONG).show();
                 } else {
@@ -3451,7 +3451,7 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
                 if (mediaRecord == null) {
                     mediaRecord = new MediaRecord(this, eglHelper.getEglCtx(), drawer.getTex_id());
                     try {
-                        mediaRecord.start();
+                        mediaRecord.start(decoderRenderer.getInitialWidth(), decoderRenderer.getInitialHeight());
                         runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.start_record), Toast.LENGTH_LONG).show());
                     } catch (Exception e) {
                         e.printStackTrace();

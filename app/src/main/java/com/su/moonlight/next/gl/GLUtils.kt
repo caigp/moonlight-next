@@ -7,7 +7,7 @@ import java.nio.ByteBuffer
 
 object GLUtils {
 
-    fun readPixels(width: Int, height: Int): Bitmap {
+    fun readPixels(width: Int, height: Int, initWidth: Int, initHeight: Int): Bitmap {
         val pixels = ByteArray(width * height * 4)
         val byteBuffer = ByteBuffer.wrap(pixels)
         GLES20.glReadPixels(
@@ -27,7 +27,7 @@ object GLUtils {
         dest.copyPixelsFromBuffer(byteBuffer)
 
         val m = Matrix()
-        m.setScale(1f, -1f, width.toFloat() / 2, height.toFloat() / 2)
+        m.setScale(initWidth / width.toFloat(), -(initHeight / height.toFloat()), width.toFloat() / 2, height.toFloat() / 2)
         return Bitmap.createBitmap(dest, 0, 0, width, height, m, false)
     }
 }
