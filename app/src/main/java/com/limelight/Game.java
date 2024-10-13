@@ -19,15 +19,19 @@ import android.graphics.Bitmap;
 import android.graphics.Outline;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
 import android.hardware.display.DisplayManager;
 import android.hardware.input.InputManager;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
+import android.opengl.GLES20;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Message;
 import android.preference.PreferenceManager;
 import android.provider.MediaStore;
 import android.util.Rational;
@@ -37,7 +41,6 @@ import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.PixelCopy;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
@@ -55,11 +58,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.RequiresApi;
 import androidx.fragment.app.FragmentActivity;
 
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.audio.AndroidAudioRenderer;
+import com.limelight.binding.audio.PcmDataCallback;
 import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.GameInputDevice;
 import com.limelight.binding.input.KeyboardTranslator;
@@ -101,6 +104,11 @@ import com.su.moonlight.next.R;
 import com.su.moonlight.next.game.menu.GameMenuPanel;
 import com.su.moonlight.next.game.pref.PerformanceInfo;
 import com.su.moonlight.next.game.pref.PerformanceOverlayView;
+import com.su.moonlight.next.gl.Drawer;
+import com.su.moonlight.next.gl.EglHelper;
+import com.su.moonlight.next.gl.GLUtils;
+import com.su.moonlight.next.gl.TextureHelper;
+import com.su.moonlight.next.record.MediaRecord;
 
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -117,7 +125,7 @@ import java.util.Map;
 public class Game extends FragmentActivity implements SurfaceHolder.Callback,
         OnGenericMotionListener, OnTouchListener, NvConnectionListener, EvdevListener,
         OnSystemUiVisibilityChangeListener, GameGestures, StreamView.InputCallbacks,
-        PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener{
+        PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener, Handler.Callback, PcmDataCallback {
     public static Game instance;
 
     private int lastButtonState = 0;
@@ -139,7 +147,16 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
 
     private static final int THREE_FINGER_TAP_THRESHOLD = 300;
 
-    private final int REQUEST_CODE = 0;
+    private final int SCREENSHOT_REQUEST_CODE = 0;
+    private final int RECORD_REQUEST_CODE = 1;
+
+    private final int EGL_INIT = 0;
+    private final int EGL_DESTROY = 1;
+    private final int EGL_DRAW = 2;
+    private final int EGL_READ_PIXELS = 3;
+    private final int EGL_START_RECORD = 4;
+    private final int EGL_STOP_RECORD = 5;
+    private final int EGL_SIZE_CHANGED = 6;
 
     private ControllerHandler controllerHandler;
     private KeyboardTranslator keyboardTranslator;
@@ -236,6 +253,15 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
     private boolean vDisplay;
 
     private ViewParent rootView;
+
+    private HandlerThread handlerThread;
+
+    private Handler glHandler;
+
+    private EglHelper eglHelper;
+    private Drawer drawer;
+    private SurfaceTexture surfaceTexture;
+    private Surface surface;
 
     @SuppressLint("MissingInflatedId")
     @Override
@@ -2897,16 +2923,18 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
 
         LimeLog.info("surfaceChanged-->"+width+" x "+height + "----"+displayWidth+" x "+displayHeight);
 
-        if (!attemptedConnection) {
-            attemptedConnection = true;
+        glHandler.obtainMessage(EGL_SIZE_CHANGED, width, height).sendToTarget();
 
-            // Update GameManager state to indicate we're "loading" while connecting
-            UiHelper.notifyStreamConnecting(Game.this);
-
-            decoderRenderer.setRenderTarget(holder.getSurface());
-            conn.start(new AndroidAudioRenderer(Game.this, prefConfig.enableAudioFx),
-                    decoderRenderer, Game.this);
-        }
+//        if (!attemptedConnection) {
+//            attemptedConnection = true;
+//
+//            // Update GameManager state to indicate we're "loading" while connecting
+//            UiHelper.notifyStreamConnecting(Game.this);
+//
+//            decoderRenderer.setRenderTarget(holder.getSurface());
+//            conn.start(new AndroidAudioRenderer(Game.this, prefConfig.enableAudioFx),
+//                    decoderRenderer, Game.this);
+//        }
 
         panZoomHandler.handleSurfaceChange();
 
@@ -2951,6 +2979,12 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
             holder.getSurface().setFrameRate(desiredFrameRate,
                     Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
         }
+
+        handlerThread = new HandlerThread("GL-Thread");
+        handlerThread.start();
+
+        glHandler = new Handler(handlerThread.getLooper(), this);
+        glHandler.sendEmptyMessageDelayed(EGL_INIT, 0);
     }
 
     @Override
@@ -2959,14 +2993,19 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
             throw new IllegalStateException("Surface destroyed before creation!");
         }
 
-        if (attemptedConnection) {
-            // Let the decoder know immediately that the surface is gone
-            decoderRenderer.prepareForStop();
+        glHandler.sendEmptyMessageDelayed(EGL_STOP_RECORD, 0);
+        glHandler.sendEmptyMessageDelayed(EGL_DESTROY, 0);
+        handlerThread.quitSafely();
 
-            if (connected) {
-                stopConnection();
-            }
-        }
+//        if (attemptedConnection) {
+//            // Let the decoder know immediately that the surface is gone
+//            decoderRenderer.prepareForStop();
+//
+//            if (connected) {
+//                stopConnection();
+//            }
+//        }
+
     }
 
     @Override
@@ -3298,10 +3337,12 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_CODE) {
+        if (requestCode == SCREENSHOT_REQUEST_CODE || requestCode == RECORD_REQUEST_CODE) {
             if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                if (requestCode == SCREENSHOT_REQUEST_CODE) {
                     screenshot();
+                } else if (requestCode == RECORD_REQUEST_CODE) {
+                    record();
                 }
             } else {
                 Toast.makeText(Game.this, getString(R.string.permission_denied), Toast.LENGTH_LONG).show();
@@ -3309,34 +3350,150 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.N)
     public void preScreenshot() {
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_CODE);
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, SCREENSHOT_REQUEST_CODE);
                 return;
             }
         }
         screenshot();
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.N)
-    private void screenshot() {
-        Bitmap dest = Bitmap.createBitmap(streamView.getWidth(), streamView.getHeight(), Bitmap.Config.ARGB_8888);
-        PixelCopy.request(streamView, dest, new PixelCopy.OnPixelCopyFinishedListener() {
-            @Override
-            public void onPixelCopyFinished(int copyResult) {
-                if (copyResult == PixelCopy.SUCCESS) {
-                    String url = MediaStore.Images.Media.insertImage(getContentResolver(), dest, String.valueOf(System.currentTimeMillis()), "screenshot");
-                    if (url == null) {
-                        Toast.makeText(Game.this, getString(R.string.insert_image_error), Toast.LENGTH_LONG).show();
-                    } else {
-                        Toast.makeText(Game.this, getString(R.string.screenshot_saved), Toast.LENGTH_LONG).show();
-                    }
-                } else {
-                    Toast.makeText(Game.this, getString(R.string.copy_error), Toast.LENGTH_LONG).show();
-                }
+    public void preRecord() {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, RECORD_REQUEST_CODE);
+                return;
             }
-        }, streamView.getHandler());
+        }
+        record();
+    }
+
+    public boolean isRecording() {
+        return mediaRecord != null;
+    }
+
+    public void record() {
+        if (mediaRecord == null) {
+            glHandler.sendEmptyMessageDelayed(EGL_START_RECORD, 0);
+        } else {
+            glHandler.sendEmptyMessageDelayed(EGL_STOP_RECORD, 0);
+        }
+    }
+
+    private void screenshot() {
+        glHandler.sendEmptyMessageDelayed(EGL_READ_PIXELS, 0);
+    }
+
+    @Override
+    public boolean handleMessage(@NonNull Message msg) {
+        switch (msg.what) {
+            case EGL_INIT:
+                eglHelper = new EglHelper();
+                eglHelper.initEgl(streamView.getHolder().getSurface(), null);
+
+                int texture = TextureHelper.loadTexture();
+                drawer = new Drawer(this);
+                drawer.create();
+                drawer.setTex_id(texture, false);
+                surfaceTexture = new SurfaceTexture(texture);
+                surfaceTexture.setOnFrameAvailableListener(new SurfaceTexture.OnFrameAvailableListener() {
+                    @Override
+                    public void onFrameAvailable(SurfaceTexture surfaceTexture) {
+                        glHandler.sendEmptyMessageDelayed(EGL_DRAW, 0);
+                    }
+                }, glHandler);
+                surface = new Surface(surfaceTexture);
+                break;
+            case EGL_DESTROY:
+                if (attemptedConnection) {
+                    // Let the decoder know immediately that the surface is gone
+                    decoderRenderer.prepareForStop();
+
+                    if (connected) {
+                        stopConnection();
+                    }
+                }
+                if (surface != null) {
+                    surface.release();
+                    surface = null;
+                }
+                if (surfaceTexture != null) {
+                    surfaceTexture.setOnFrameAvailableListener(null);
+                    surfaceTexture.release();
+                    surfaceTexture = null;
+                }
+                drawer.destroy();
+                eglHelper.destroyEgl();
+                break;
+            case EGL_DRAW:
+                drawer.glDraw();
+                eglHelper.swapBuffers();
+                surfaceTexture.updateTexImage();
+                if (mediaRecord != null) {
+                    mediaRecord.updateVideo();
+                }
+                break;
+            case EGL_READ_PIXELS:
+                int width = streamView.getWidth();
+                int height = streamView.getHeight();
+                Bitmap dest = GLUtils.INSTANCE.readPixels(width, height);
+
+                String url = MediaStore.Images.Media.insertImage(getContentResolver(), dest, String.valueOf(System.currentTimeMillis()), "screenshot");
+                if (url == null) {
+                    Toast.makeText(Game.this, getString(R.string.insert_image_error), Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(Game.this, getString(R.string.screenshot_saved), Toast.LENGTH_LONG).show();
+                }
+                break;
+            case EGL_START_RECORD:
+                if (mediaRecord == null) {
+                    mediaRecord = new MediaRecord(this, eglHelper.getEglCtx(), drawer.getTex_id());
+                    try {
+                        mediaRecord.start();
+                        runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.start_record), Toast.LENGTH_LONG).show());
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_fail), Toast.LENGTH_LONG).show());
+                    }
+                }
+                break;
+            case EGL_STOP_RECORD:
+                if (mediaRecord != null) {
+                    String path = mediaRecord.stop();
+                    if (path != null) {
+                        runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_saved), Toast.LENGTH_LONG).show());
+                    } else {
+                        runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_fail), Toast.LENGTH_LONG).show());
+                    }
+                    mediaRecord = null;
+                }
+                break;
+            case EGL_SIZE_CHANGED:
+                GLES20.glViewport(0, 0, msg.arg1, msg.arg2);
+
+                if (!attemptedConnection) {
+                    attemptedConnection = true;
+
+                    // Update GameManager state to indicate we're "loading" while connecting
+                    UiHelper.notifyStreamConnecting(Game.this);
+
+                    decoderRenderer.setRenderTarget(surface);
+                    conn.start(new AndroidAudioRenderer(Game.this, prefConfig.enableAudioFx, Game.this),
+                            decoderRenderer, Game.this);
+                }
+                break;
+        }
+        return true;
+    }
+
+    private MediaRecord mediaRecord;
+
+    @Override
+    public void decodedAudio(short[] audioData) {
+        if (mediaRecord != null) {
+            mediaRecord.writeAudio(audioData);
+        }
     }
 }

@@ -1,13 +1,13 @@
 package com.su.moonlight.next.game.menu
 
 import android.app.Activity
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
 import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.OndemandVideo
 import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Autorenew
@@ -430,14 +430,24 @@ class GameMenuPanel(
             ) { game.selectMouseModeModal() })
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            options.add(
-                MenuOption(
-                    getString(R.string.screenshot),
-                    false,
-                    Icons.Default.Screenshot
-                ) { game.preScreenshot() })
+        options.add(
+            MenuOption(
+                getString(R.string.screenshot),
+                false,
+                Icons.Default.Screenshot
+            ) { game.preScreenshot() })
+
+        val label = if (game.isRecording) {
+            getString(R.string.stop_record)
+        } else {
+            getString(R.string.start_record)
         }
+        options.add(
+            MenuOption(
+                label,
+                false,
+                Icons.Default.OndemandVideo
+            ) { game.preRecord() })
 
         options.add(CancelMenuOption())
 

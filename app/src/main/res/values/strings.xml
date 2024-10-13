@@ -533,5 +533,9 @@
     <string name="screenshot_saved">Screenshot saved</string>
     <string name="insert_image_error">Insert image error</string>
     <string name="permission_denied">Permission denied</string>
+    <string name="start_record">Start record</string>
+    <string name="stop_record">Stop record</string>
+    <string name="record_fail">Record failed</string>
+    <string name="record_saved">Record saved</string>
 
 </resources>

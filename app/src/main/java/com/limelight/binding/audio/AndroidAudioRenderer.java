@@ -20,9 +20,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     private AudioTrack track;
 
-    public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
+    private PcmDataCallback pcmDataCallback;
+    public AndroidAudioRenderer(Context context, boolean enableAudioFx, PcmDataCallback pcmDataCallback) {
         this.context = context;
         this.enableAudioFx = enableAudioFx;
+        this.pcmDataCallback = pcmDataCallback;
     }
 
     private AudioTrack createAudioTrack(int channelConfig, int sampleRate, int bufferSize, boolean lowLatency) {
@@ -193,6 +195,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
             // of pending audio data, so we do the above check to be able to bound
             // latency at 40 ms in that situation.
             track.write(audioData, 0, audioData.length);
+            pcmDataCallback.decodedAudio(audioData);
         }
         else {
             LimeLog.info("Too much pending audio data: " + MoonBridge.getPendingAudioDuration() +" ms");
