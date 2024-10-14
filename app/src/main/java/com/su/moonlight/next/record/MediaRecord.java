@@ -9,7 +9,6 @@ import android.util.Log;
 
 import com.su.moonlight.next.record.audio.AudioEncoder;
 import com.su.moonlight.next.record.video.VideoEncoder;
-import com.su.moonlight.next.utils.MediaUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -41,13 +40,13 @@ public class MediaRecord implements IMediaRecord, Runnable {
         this.context = context;
     }
 
-    public void start(int width, int height, EGLContext eglContext, int texture) throws Exception {
+    public void start(int width, int height, EGLContext eglContext, int texture) {
         if (muxer == null) {
-            file = new File(context.getExternalCacheDir(), System.currentTimeMillis() + ".mp4");
+            file = new File(context.getExternalCacheDir(), "record_" + System.currentTimeMillis());
             try {
                 muxer = new MediaMuxer(file.getPath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
             } catch (IOException e) {
-                throw new IOException(e);
+                e.printStackTrace();
             }
         }
 
@@ -84,8 +83,8 @@ public class MediaRecord implements IMediaRecord, Runnable {
         sampleQueue.add(new Sample(flag, byteBuf, bufferInfo));
     }
 
-    public String stop() throws Exception {
-        String path = null;
+    public boolean stop() {
+        boolean ret = false;
         boolean hasAudio = audioEncoder.isHasAudio();
 
         if (audioEncoder != null) {
@@ -106,16 +105,14 @@ public class MediaRecord implements IMediaRecord, Runnable {
             checkNeedAudio(hasAudio);
             try {
                 muxer.release();
-                path = MediaUtils.INSTANCE.insertVideo(context, file, "record_" + System.currentTimeMillis(), "record");
+                ret = true;
             } catch (Exception e) {
-                throw e;
+                e.printStackTrace();
             } finally {
                 muxer = null;
-                file.delete();
             }
         }
-
-        return path;
+        return ret;
     }
 
     /**
@@ -152,6 +149,10 @@ public class MediaRecord implements IMediaRecord, Runnable {
         if (videoEncoder != null) {
             videoEncoder.draw();
         }
+    }
+
+    public File getFile() {
+        return file;
     }
 
     @Override

@@ -17,6 +17,7 @@ import com.su.moonlight.next.record.MediaRecord;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class VideoEncoder implements Runnable {
@@ -37,7 +38,7 @@ public class VideoEncoder implements Runnable {
 
     private MediaCodec mediaCodec;
 
-    private boolean isStart = false;
+    private AtomicBoolean isStart = new AtomicBoolean(false);
 
     private Drawer drawer;
 
@@ -74,36 +75,37 @@ public class VideoEncoder implements Runnable {
         this.mediaRecord = mediaRecord;
     }
 
-    public void start(EGLContext eglContext , int texture) throws IOException {
+    public void start(EGLContext eglContext , int texture) {
         surface = mediaCodec.createInputSurface();
         mediaCodec.start();
-        isStart = true;
 
         handlerThread = new HandlerThread("VideoEncoderThread");
         handlerThread.start();
         handler = new Handler(handlerThread.getLooper(), callback);
         handler.obtainMessage(INIT_EGL, texture, 0, eglContext).sendToTarget();
         new Thread(this).start();
+
+        isStart.set(true);
     }
 
     public void draw() {
-        if (isStart) {
+        if (isStart.get()) {
             handler.sendEmptyMessage(DRAW);
         }
     }
 
     public void stop() {
-        if (isStart) {
+        if (isStart.get()) {
             handler.sendEmptyMessage(DESTROY_EGL);
             handlerThread.quitSafely();
-            isStart = false;
+            isStart.set(false);
         }
     }
 
     @Override
     public void run() {
         try {
-            while (isStart) {
+            while (isStart.get()) {
 
                 MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
                 int outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 100000);

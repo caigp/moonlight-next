@@ -24,11 +24,12 @@ object MediaUtils {
         values.put(MediaStore.Images.Media.DESCRIPTION, description)
         values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
         values.put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+        values.put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
         values.put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.put(
                 MediaStore.Images.Media.RELATIVE_PATH,
-                Environment.DIRECTORY_PICTURES + "/MyAppImages"
+                Environment.DIRECTORY_PICTURES + "/MoonlightNext/screenshot"
             )
             val resolver = context.contentResolver
             val externalContentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
@@ -46,6 +47,12 @@ object MediaUtils {
             }
             uri.toString()
         } else {
+            val dir = File("${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)}/MoonlightNext/screenshot")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            values.put(MediaStore.Video.Media.DATA, File(dir, "$title.jpg").absolutePath)
+
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             if (uri != null) {
@@ -68,9 +75,9 @@ object MediaUtils {
     fun insertVideo(
         context: Context,
         source: File,
-        title: String,
         description: String?
     ): String? {
+        val title = source.name
         val fis = FileInputStream(source)
 
         val values = ContentValues()
@@ -79,11 +86,12 @@ object MediaUtils {
         values.put(MediaStore.Video.Media.DESCRIPTION, description)
         values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
         values.put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+        values.put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
         values.put(MediaStore.Video.Media.DATE_TAKEN, System.currentTimeMillis())
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.put(
                 MediaStore.Video.Media.RELATIVE_PATH,
-                Environment.DIRECTORY_MOVIES + "/MyAppVideos"
+                Environment.DIRECTORY_MOVIES + "/MoonlightNext/record"
             )
             val resolver = context.contentResolver
             val externalContentUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -100,6 +108,12 @@ object MediaUtils {
             }
             uri.toString()
         } else {
+            val dir = File("${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)}/MoonlightNext/record")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            values.put(MediaStore.Video.Media.DATA, File(dir, "$title.mp4").absolutePath)
+
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
             if (uri != null) {
