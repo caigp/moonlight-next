@@ -3449,9 +3449,9 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
                 break;
             case EGL_START_RECORD:
                 if (mediaRecord == null) {
-                    mediaRecord = new MediaRecord(this, eglHelper.getEglCtx(), drawer.getTex_id());
+                    mediaRecord = new MediaRecord(this);
                     try {
-                        mediaRecord.start(decoderRenderer.getInitialWidth(), decoderRenderer.getInitialHeight());
+                        mediaRecord.start(decoderRenderer.getInitialWidth(), decoderRenderer.getInitialHeight(), eglHelper.getEglCtx(), drawer.getTex_id());
                         runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.start_record), Toast.LENGTH_LONG).show());
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -3461,11 +3461,15 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
                 break;
             case EGL_STOP_RECORD:
                 if (mediaRecord != null) {
-                    String path = mediaRecord.stop();
-                    if (path != null) {
-                        runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_saved), Toast.LENGTH_LONG).show());
-                    } else {
-                        runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_fail), Toast.LENGTH_LONG).show());
+                    try {
+                        String path = mediaRecord.stop();
+                        if (path != null) {
+                            runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_saved), Toast.LENGTH_LONG).show());
+                        } else {
+                            runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_fail), Toast.LENGTH_LONG).show());
+                        }
+                    } catch (Exception e) {
+                        runOnUiThread(() -> Toast.makeText(Game.this, e.getMessage(), Toast.LENGTH_LONG).show());
                     }
                     mediaRecord = null;
                 }

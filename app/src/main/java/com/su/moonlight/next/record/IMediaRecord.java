@@ -7,5 +7,5 @@ import java.nio.ByteBuffer;
 
 public interface IMediaRecord {
     void writeSample(int flag, ByteBuffer byteBuf, MediaCodec.BufferInfo bufferInfo);
-    void addTrack(int flag, MediaFormat format);
+    void addTrack(MediaFormat format, int flag);
 }

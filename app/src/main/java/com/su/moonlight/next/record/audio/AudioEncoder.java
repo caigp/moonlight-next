@@ -34,19 +34,8 @@ public class AudioEncoder implements Runnable {
         this.mediaRecord = mediaRecord;
     }
 
-    public void start() throws Exception {
-        try {
-            MediaFormat format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, CHANNEL_COUNT);
-            format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
-            format.setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE);
-
-            mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
-            mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-
-            mediaCodec.start();
-        } catch (IOException e) {
-            throw new IOException(e);
-        }
+    public void start() {
+        mediaCodec.start();
 
         isStart.set(true);
         new Thread(this).start();
@@ -69,7 +58,7 @@ public class AudioEncoder implements Runnable {
     public void write(short[] ss) {
         if (isStart.get()) {
             try {
-                int dequeueInputBuffer = mediaCodec.dequeueInputBuffer(1000);
+                int dequeueInputBuffer = mediaCodec.dequeueInputBuffer(100000);
                 if (dequeueInputBuffer >= 0) {
                     ByteBuffer inputBuffer = mediaCodec.getInputBuffer(dequeueInputBuffer);
                     inputBuffer.put(shortToByte(ss));
@@ -83,31 +72,26 @@ public class AudioEncoder implements Runnable {
     }
 
     public void stop() {
-        if (isStart.get()) {
-            isStart.set(false);
-        }
+        isStart.set(false);
     }
 
     @Override
     public void run() {
         try {
             while (isStart.get()) {
-                ByteBuffer[] outputBuffers = mediaCodec.getOutputBuffers();
 
                 MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
                 int outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 100000);
                 if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat outputFormat = mediaCodec.getOutputFormat();
-                    mediaRecord.addTrack(MediaRecord.FLAG_AUDIO, outputFormat);
-                }
-                while (outputBufferIndex >= 0) {
-                    ByteBuffer outputBuffer = outputBuffers[outputBufferIndex];
+                    mediaRecord.addTrack(outputFormat, MediaRecord.FLAG_AUDIO);
+                } else if (outputBufferIndex >= 0) {
+                    ByteBuffer outputBuffer = mediaCodec.getOutputBuffer(outputBufferIndex);
                     mediaRecord.writeSample(MediaRecord.FLAG_AUDIO, outputBuffer, bufferInfo);
                     if (bufferInfo.flags == 0) {
                         hasAudio = true;
                     }
                     mediaCodec.releaseOutputBuffer(outputBufferIndex, false);
-                    outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 100000);
                 }
 
             }
@@ -125,5 +109,19 @@ public class AudioEncoder implements Runnable {
 
     public boolean isHasAudio() {
         return hasAudio;
+    }
+
+    public void configure() {
+        try {
+            MediaFormat format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, CHANNEL_COUNT);
+            format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+            format.setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE);
+
+            mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
+            mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }

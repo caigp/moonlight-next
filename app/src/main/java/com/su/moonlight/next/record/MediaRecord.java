@@ -4,8 +4,8 @@ import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
-import android.opengl.EGL14;
 import android.opengl.EGLContext;
+import android.util.Log;
 
 import com.su.moonlight.next.record.audio.AudioEncoder;
 import com.su.moonlight.next.record.video.VideoEncoder;
@@ -14,38 +14,34 @@ import com.su.moonlight.next.utils.MediaUtils;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ArrayBlockingQueue;
 
-public class MediaRecord implements IMediaRecord {
-
+public class MediaRecord implements IMediaRecord, Runnable {
+    private static final String TAG = "MediaRecord";
     private MediaMuxer muxer;
-
-    private AtomicBoolean isStarted = new AtomicBoolean(false);
 
     private AudioEncoder audioEncoder;
     private VideoEncoder videoEncoder;
 
     private Context context;
-    private EGLContext eglContext;
-    private int texture;
     public static final int FLAG_AUDIO = 0X01;
     public static final int FLAG_VIDEO = 0X10;
 
     public static final int CONFIG = 0X11;
-
-    private int currentConfig;
+    private int currentConfig = 0;
 
     private int audioTrackIndex;
     private int videoTrackIndex;
     private File file;
+    private Thread muxerThread;
 
-    public MediaRecord(Context context, EGLContext eglContext, int texture) {
+    private ArrayBlockingQueue<Sample> sampleQueue = new ArrayBlockingQueue<>(1024);
+
+    public MediaRecord(Context context) {
         this.context = context;
-        this.eglContext = eglContext;
-        this.texture = texture;
     }
 
-    public void start(int width, int height) throws Exception {
+    public void start(int width, int height, EGLContext eglContext, int texture) throws Exception {
         if (muxer == null) {
             file = new File(context.getExternalCacheDir(), System.currentTimeMillis() + ".mp4");
             try {
@@ -54,68 +50,43 @@ public class MediaRecord implements IMediaRecord {
                 throw new IOException(e);
             }
         }
+
         if (audioEncoder == null) {
             audioEncoder = new AudioEncoder(this);
+            audioEncoder.configure();
             audioEncoder.start();
         }
         if (videoEncoder == null) {
-            videoEncoder = new VideoEncoder(context, eglContext, this, texture, width, height);
-            videoEncoder.start();
+            videoEncoder = new VideoEncoder(context, this);
+            videoEncoder.configure(width, height);
+            videoEncoder.start(eglContext, texture);
+        }
+    }
+
+    @Override
+    public void addTrack(MediaFormat format, int flag) {
+        currentConfig = currentConfig | flag;
+        if (flag == FLAG_AUDIO) {
+            audioTrackIndex = muxer.addTrack(format);
+        } else if (flag == FLAG_VIDEO) {
+            videoTrackIndex = muxer.addTrack(format);
+        }
+        if (currentConfig == CONFIG) {
+            muxer.start();
+            muxerThread = new Thread(this);
+            muxerThread.start();
         }
     }
 
     @Override
     public void writeSample(int flag, ByteBuffer byteBuf, MediaCodec.BufferInfo bufferInfo) {
-        if (muxer == null) {
-            return;
-        }
-        if (!isStarted.get()) {
-            return;
-        }
         bufferInfo.presentationTimeUs = getPTSUs();
-        if (flag == FLAG_AUDIO) {
-            muxer.writeSampleData(audioTrackIndex, byteBuf, bufferInfo);
-        } else if (flag == FLAG_VIDEO) {
-            muxer.writeSampleData(videoTrackIndex, byteBuf, bufferInfo);
-        }
+        sampleQueue.add(new Sample(flag, byteBuf, bufferInfo));
     }
 
-    @Override
-    public void addTrack(int flag, MediaFormat format) {
-        if (muxer == null) {
-            return;
-        }
-        int track = muxer.addTrack(format);
-        if (flag == FLAG_AUDIO) {
-            audioTrackIndex = track;
-        } else if (flag == FLAG_VIDEO) {
-            videoTrackIndex = track;
-        }
-        currentConfig |= flag;
-        if (currentConfig == CONFIG) {
-            muxer.start();
-            isStarted.set(true);
-        }
-    }
-
-    public String stop() {
+    public String stop() throws Exception {
         String path = null;
-        if (muxer != null) {
-            if (isStarted.get()) {
-                isStarted.set(false);
-                try {
-                    checkNeedAudio();
-                    muxer.release();
-
-                    path = MediaUtils.INSTANCE.insertVideo(context, file, "record_" + System.currentTimeMillis(), "record");
-                    file.delete();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-            muxer = null;
-        }
-        eglContext = EGL14.EGL_NO_CONTEXT;
+        boolean hasAudio = audioEncoder.isHasAudio();
 
         if (audioEncoder != null) {
             audioEncoder.stop();
@@ -125,21 +96,44 @@ public class MediaRecord implements IMediaRecord {
             videoEncoder.stop();
             videoEncoder = null;
         }
+
+        sampleQueue.clear();
+        if (muxerThread != null) {
+            muxerThread.interrupt();
+            muxerThread = null;
+        }
+        if (muxer != null) {
+            checkNeedAudio(hasAudio);
+            try {
+                muxer.release();
+                path = MediaUtils.INSTANCE.insertVideo(context, file, "record_" + System.currentTimeMillis(), "record");
+            } catch (Exception e) {
+                throw e;
+            } finally {
+                muxer = null;
+                file.delete();
+            }
+        }
+
         return path;
     }
 
     /**
      * 这里很重要，如果添加了音频轨道却没有任何音频输入会无法正常结束
      */
-    private void checkNeedAudio() {
+    private void checkNeedAudio(boolean hasAudio) {
         if ((CONFIG & FLAG_AUDIO) == FLAG_AUDIO) {
-            if (!audioEncoder.isHasAudio()) {
+            if (!hasAudio) {
                 //随便写点东西
                 ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[1]);
                 MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
                 bufferInfo.size = 1;
                 bufferInfo.presentationTimeUs = getPTSUs();
-                muxer.writeSampleData(audioTrackIndex, byteBuffer, bufferInfo);
+                try {
+                    muxer.writeSampleData(audioTrackIndex, byteBuffer, bufferInfo);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
@@ -160,4 +154,22 @@ public class MediaRecord implements IMediaRecord {
         }
     }
 
+    @Override
+    public void run() {
+        while (!Thread.interrupted()) {
+            Sample sample;
+            try {
+                sample = sampleQueue.take();
+            } catch (InterruptedException e) {
+                break;
+            }
+
+            try {
+                muxer.writeSampleData(sample.getFlag() == FLAG_AUDIO ? audioTrackIndex : videoTrackIndex, sample.getByteBuf(), sample.getBufferInfo());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        Log.d(TAG, "muxer stop...");
+    }
 }

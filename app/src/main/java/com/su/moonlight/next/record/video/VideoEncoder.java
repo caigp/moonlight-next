@@ -4,7 +4,6 @@ import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
-import android.opengl.EGL14;
 import android.opengl.EGLContext;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -28,8 +27,6 @@ public class VideoEncoder implements Runnable {
 
     private final int DESTROY_EGL = 2;
 
-    private EGLContext eglContext;
-
     private Surface surface;
 
     private HandlerThread handlerThread;
@@ -46,15 +43,18 @@ public class VideoEncoder implements Runnable {
 
     private IMediaRecord mediaRecord;
 
-    private int width, height;
+    private Context context;
 
     private final Handler.Callback callback = new Handler.Callback() {
         @Override
         public boolean handleMessage(Message msg) {
             switch (msg.what) {
                 case INIT_EGL:
-                    eglHelper.initEgl(surface, eglContext);
+                    eglHelper = new EglHelper();
+                    eglHelper.initEgl(surface, (EGLContext) msg.obj);
+                    drawer = new Drawer(context);
                     drawer.create();
+                    drawer.setTex_id(msg.arg1, true);
                     break;
                 case DRAW:
                     drawer.glDraw();
@@ -63,47 +63,26 @@ public class VideoEncoder implements Runnable {
                 case DESTROY_EGL:
                     drawer.destroy();
                     eglHelper.destroyEgl();
-                    eglContext = EGL14.EGL_NO_CONTEXT;
                     break;
             }
             return false;
         }
     };
 
-    public VideoEncoder(Context context, EGLContext eglContext, IMediaRecord mediaRecord, int texture, int width, int height) {
-        this.eglContext = eglContext;
+    public VideoEncoder(Context context, IMediaRecord mediaRecord) {
+        this.context = context;
         this.mediaRecord = mediaRecord;
-        drawer = new Drawer(context);
-        drawer.setTex_id(texture, true);
-        this.width = width;
-        this.height = height;
     }
 
-    public void start() throws IOException {
-        try {
-            mediaCodec = MediaCodec.createEncoderByType("video/avc");
+    public void start(EGLContext eglContext , int texture) throws IOException {
+        surface = mediaCodec.createInputSurface();
+        mediaCodec.start();
+        isStart = true;
 
-            MediaFormat mediaFormat = MediaFormat.createVideoFormat("video/avc", width, height);
-            mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 10000000);
-            mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
-            mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
-
-            mediaCodec.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-            surface = mediaCodec.createInputSurface();
-
-            mediaCodec.start();
-        } catch (IOException e) {
-            throw new IOException(e);
-        }
-
-        eglHelper = new EglHelper();
         handlerThread = new HandlerThread("VideoEncoderThread");
         handlerThread.start();
         handler = new Handler(handlerThread.getLooper(), callback);
-        handler.sendEmptyMessage(INIT_EGL);
-        isStart = true;
-
+        handler.obtainMessage(INIT_EGL, texture, 0, eglContext).sendToTarget();
         new Thread(this).start();
     }
 
@@ -121,29 +100,21 @@ public class VideoEncoder implements Runnable {
         }
     }
 
-    public Drawer getDrawer() {
-        return drawer;
-    }
-
     @Override
     public void run() {
         try {
-
             while (isStart) {
-                ByteBuffer[] outputBuffers = mediaCodec.getOutputBuffers();
 
                 MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
                 int outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 100000);
                 if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat outputFormat = mediaCodec.getOutputFormat();
-                    mediaRecord.addTrack(MediaRecord.FLAG_VIDEO, outputFormat);
-                }
-                while (outputBufferIndex >= 0) {
-                    ByteBuffer outputBuffer = outputBuffers[outputBufferIndex];
+                    mediaRecord.addTrack(outputFormat, MediaRecord.FLAG_VIDEO);
+                } else if (outputBufferIndex >= 0) {
+                    ByteBuffer outputBuffer = mediaCodec.getOutputBuffer(outputBufferIndex);
                     mediaRecord.writeSample(MediaRecord.FLAG_VIDEO, outputBuffer, bufferInfo);
 
                     mediaCodec.releaseOutputBuffer(outputBufferIndex, false);
-                    outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 100000);
                 }
 
             }
@@ -155,6 +126,23 @@ public class VideoEncoder implements Runnable {
             mediaCodec.stop();
             mediaCodec.release();
         } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void configure(int width, int height) {
+        try {
+            mediaCodec = MediaCodec.createEncoderByType("video/avc");
+
+            MediaFormat mediaFormat = MediaFormat.createVideoFormat("video/avc", width, height);
+            mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 10000000);
+            mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+            mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+
+            mediaCodec.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+
+        } catch (IOException e) {
             e.printStackTrace();
         }
     }
