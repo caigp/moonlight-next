@@ -3,20 +3,24 @@ package com.su.moonlight.next.record.audio;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
+import android.util.Log;
 
 import com.su.moonlight.next.record.IMediaRecord;
 import com.su.moonlight.next.record.MediaRecord;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class AudioEncoder implements Runnable {
 
+    private static final String TAG = "AudioEncoder";
     private MediaCodec mediaCodec;
 
-    private AtomicBoolean isStart = new AtomicBoolean(false);
+    private final AtomicBoolean isStart = new AtomicBoolean(false);
+    private final ArrayBlockingQueue<byte[]> pcmQueue = new ArrayBlockingQueue<>(1024);
 
     // 采样率 44.1kHz，所有设备都支持
     private final static int SAMPLE_RATE = 44100;
@@ -26,19 +30,21 @@ public class AudioEncoder implements Runnable {
     // 比特率
     private static final int BIT_RATE = 128000;
 
-    private IMediaRecord mediaRecord;
+    private final IMediaRecord mediaRecord;
 
-    private boolean hasAudio = false;
+    private Thread thread;
 
     public AudioEncoder(IMediaRecord mediaRecord) {
         this.mediaRecord = mediaRecord;
+        pcmQueue.offer(new byte[1]);
     }
 
     public void start() {
         mediaCodec.start();
 
         isStart.set(true);
-        new Thread(this).start();
+        thread = new Thread(this);
+        thread.start();
     }
 
     /**
@@ -57,22 +63,17 @@ public class AudioEncoder implements Runnable {
 
     public void write(short[] ss) {
         if (isStart.get()) {
-            try {
-                int dequeueInputBuffer = mediaCodec.dequeueInputBuffer(100000);
-                if (dequeueInputBuffer >= 0) {
-                    ByteBuffer inputBuffer = mediaCodec.getInputBuffer(dequeueInputBuffer);
-                    inputBuffer.put(shortToByte(ss));
-
-                    mediaCodec.queueInputBuffer(dequeueInputBuffer, 0, inputBuffer.position(), 0, MediaCodec.BUFFER_FLAG_KEY_FRAME);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            pcmQueue.offer(shortToByte(ss));
         }
     }
 
     public void stop() {
         isStart.set(false);
+        pcmQueue.clear();
+        if (thread != null) {
+            thread.interrupt();
+            thread = null;
+        }
     }
 
     @Override
@@ -88,12 +89,17 @@ public class AudioEncoder implements Runnable {
                 } else if (outputBufferIndex >= 0) {
                     ByteBuffer outputBuffer = mediaCodec.getOutputBuffer(outputBufferIndex);
                     mediaRecord.writeSample(MediaRecord.FLAG_AUDIO, outputBuffer, bufferInfo);
-                    if (bufferInfo.flags == 0) {
-                        hasAudio = true;
-                    }
                     mediaCodec.releaseOutputBuffer(outputBufferIndex, false);
                 }
 
+                byte[] data = pcmQueue.take();
+
+                int dequeueInputBuffer = mediaCodec.dequeueInputBuffer(100000);
+                if (dequeueInputBuffer >= 0) {
+                    ByteBuffer inputBuffer = mediaCodec.getInputBuffer(dequeueInputBuffer);
+                    inputBuffer.put(data);
+                    mediaCodec.queueInputBuffer(dequeueInputBuffer, 0, inputBuffer.position(), 0, MediaCodec.BUFFER_FLAG_KEY_FRAME);
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -105,10 +111,7 @@ public class AudioEncoder implements Runnable {
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    public boolean isHasAudio() {
-        return hasAudio;
+        Log.d(TAG, "stop...");
     }
 
     public void configure() {
@@ -119,7 +122,6 @@ public class AudioEncoder implements Runnable {
 
             mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
             mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-
         } catch (IOException e) {
             e.printStackTrace();
         }

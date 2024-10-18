@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class VideoEncoder implements Runnable {
-
+    private static final String TAG = "VideoEncoder";
     private final int INIT_EGL = 0;
 
     private final int DRAW = 1;
@@ -38,13 +38,13 @@ public class VideoEncoder implements Runnable {
 
     private MediaCodec mediaCodec;
 
-    private AtomicBoolean isStart = new AtomicBoolean(false);
+    private final AtomicBoolean isStart = new AtomicBoolean(false);
 
     private Drawer drawer;
 
-    private IMediaRecord mediaRecord;
+    private final IMediaRecord mediaRecord;
 
-    private Context context;
+    private final Context context;
 
     private final Handler.Callback callback = new Handler.Callback() {
         @Override
@@ -95,18 +95,16 @@ public class VideoEncoder implements Runnable {
     }
 
     public void stop() {
-        if (isStart.get()) {
+        if (isStart.getAndSet(false)) {
             handler.sendEmptyMessage(DESTROY_EGL);
             handlerThread.quitSafely();
-            isStart.set(false);
         }
     }
 
     @Override
     public void run() {
-        try {
-            while (isStart.get()) {
-
+        while (isStart.get()) {
+            try {
                 MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
                 int outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 100000);
                 if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -118,10 +116,10 @@ public class VideoEncoder implements Runnable {
 
                     mediaCodec.releaseOutputBuffer(outputBufferIndex, false);
                 }
-
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+
         }
 
         try {
@@ -134,12 +132,13 @@ public class VideoEncoder implements Runnable {
 
     public void configure(int width, int height) {
         try {
-            mediaCodec = MediaCodec.createEncoderByType("video/avc");
 
-            MediaFormat mediaFormat = MediaFormat.createVideoFormat("video/avc", width, height);
+            mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+
+            MediaFormat mediaFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
             mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
             mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 10000000);
-            mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+            mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 15);
             mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
 
             mediaCodec.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);

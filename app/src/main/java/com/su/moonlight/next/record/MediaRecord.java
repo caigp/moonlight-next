@@ -2,6 +2,8 @@ package com.su.moonlight.next.record;
 
 import android.content.Context;
 import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.opengl.EGLContext;
@@ -22,7 +24,7 @@ public class MediaRecord implements IMediaRecord, Runnable {
     private AudioEncoder audioEncoder;
     private VideoEncoder videoEncoder;
 
-    private Context context;
+    private final Context context;
     public static final int FLAG_AUDIO = 0X01;
     public static final int FLAG_VIDEO = 0X10;
 
@@ -34,13 +36,14 @@ public class MediaRecord implements IMediaRecord, Runnable {
     private File file;
     private Thread muxerThread;
 
-    private ArrayBlockingQueue<Sample> sampleQueue = new ArrayBlockingQueue<>(1024);
+    private final ArrayBlockingQueue<Sample> sampleQueue = new ArrayBlockingQueue<>(1024);
 
     public MediaRecord(Context context) {
         this.context = context;
     }
 
     public void start(int width, int height, EGLContext eglContext, int texture) {
+        Log.d(TAG, "开始录像...");
         if (muxer == null) {
             file = new File(context.getExternalCacheDir(), "record_" + System.currentTimeMillis());
             try {
@@ -50,21 +53,28 @@ public class MediaRecord implements IMediaRecord, Runnable {
             }
         }
 
-        if (audioEncoder == null) {
-            audioEncoder = new AudioEncoder(this);
-            audioEncoder.configure();
-            audioEncoder.start();
+        if ((CONFIG & FLAG_AUDIO) == FLAG_AUDIO) {
+
+            if (audioEncoder == null) {
+                audioEncoder = new AudioEncoder(this);
+                audioEncoder.configure();
+                audioEncoder.start();
+            }
         }
-        if (videoEncoder == null) {
-            videoEncoder = new VideoEncoder(context, this);
-            videoEncoder.configure(width, height);
-            videoEncoder.start(eglContext, texture);
+
+        if ((CONFIG & FLAG_VIDEO) == FLAG_VIDEO) {
+            if (videoEncoder == null) {
+                videoEncoder = new VideoEncoder(context, this);
+                videoEncoder.configure(width, height);
+                videoEncoder.start(eglContext, texture);
+            }
         }
     }
 
     @Override
     public void addTrack(MediaFormat format, int flag) {
         currentConfig = currentConfig | flag;
+        Log.i(TAG, "addTrack: 0x" + Integer.toHexString(flag));
         if (flag == FLAG_AUDIO) {
             audioTrackIndex = muxer.addTrack(format);
         } else if (flag == FLAG_VIDEO) {
@@ -79,13 +89,13 @@ public class MediaRecord implements IMediaRecord, Runnable {
 
     @Override
     public void writeSample(int flag, ByteBuffer byteBuf, MediaCodec.BufferInfo bufferInfo) {
+        Log.d(TAG, "writeSample: " + String.format("%02x", flag));
         bufferInfo.presentationTimeUs = getPTSUs();
-        sampleQueue.add(new Sample(flag, byteBuf, bufferInfo));
+        sampleQueue.offer(new Sample(flag, byteBuf, bufferInfo));
     }
 
     public boolean stop() {
         boolean ret = false;
-        boolean hasAudio = audioEncoder.isHasAudio();
 
         if (audioEncoder != null) {
             audioEncoder.stop();
@@ -99,10 +109,14 @@ public class MediaRecord implements IMediaRecord, Runnable {
         sampleQueue.clear();
         if (muxerThread != null) {
             muxerThread.interrupt();
+            try {
+                muxerThread.join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
             muxerThread = null;
         }
         if (muxer != null) {
-            checkNeedAudio(hasAudio);
             try {
                 muxer.release();
                 ret = true;
@@ -155,10 +169,37 @@ public class MediaRecord implements IMediaRecord, Runnable {
         return file;
     }
 
+    public static MediaCodecInfo getEncoderInfo(String mimeType) {
+        MediaCodecList codecList = new MediaCodecList(MediaCodecList.ALL_CODECS);
+        MediaCodecInfo[] codecInfos = codecList.getCodecInfos();
+
+        for (MediaCodecInfo codecInfo : codecInfos) {
+            if (!codecInfo.isEncoder()) {
+                continue; // 只关心编码器
+            }
+
+            String codecName = codecInfo.getName();
+            Log.i(TAG, "Encoder: " + codecName);
+
+            if (!codecName.startsWith("OMX")) {
+                continue;
+            }
+
+            String[] types = codecInfo.getSupportedTypes();
+            for (int j = 0; j < types.length; j++) {
+                if (types[j].equalsIgnoreCase(mimeType)) {
+                    return codecInfo;
+                }
+            }
+        }
+        return null;
+    }
+
     @Override
     public void run() {
         while (!Thread.interrupted()) {
-            Sample sample;
+
+            Sample sample = null;
             try {
                 sample = sampleQueue.take();
             } catch (InterruptedException e) {
