@@ -2994,7 +2994,9 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
             throw new IllegalStateException("Surface destroyed before creation!");
         }
 
-        stopRecord();
+        if (MediaRecord.getIsRunning()) {
+            stopRecord();
+        }
         glHandler.sendEmptyMessageDelayed(EGL_DESTROY, 0);
         handlerThread.quitSafely();
 
@@ -3010,8 +3012,15 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
     }
 
     private void stopRecord() {
-        if (mediaRecord != null) {
-            record();
+        boolean ret = mediaRecord.stop();
+        File recordFile = mediaRecord.getFile();
+        if (ret) {
+            new Thread(() -> {
+                MediaUtils.INSTANCE.insertVideo(this, recordFile, "record");
+                runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_saved), Toast.LENGTH_LONG).show());
+            }).start();
+        } else {
+            Toast.makeText(Game.this, getString(R.string.record_fail), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -3349,7 +3358,11 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
                 if (requestCode == SCREENSHOT_REQUEST_CODE) {
                     screenshot();
                 } else {
-                    record();
+                    if (isRecording()) {
+                        stopRecord();
+                    } else {
+                        startRecord();
+                    }
                 }
             } else {
                 Toast.makeText(Game.this, getString(R.string.permission_denied), Toast.LENGTH_LONG).show();
@@ -3367,39 +3380,27 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
         screenshot();
     }
 
-    public void preRecord() {
+    public void preStartOrStopRecord() {
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, RECORD_REQUEST_CODE);
                 return;
             }
         }
-        record();
+        if (isRecording()) {
+            stopRecord();
+        } else {
+            startRecord();
+        }
     }
 
     public boolean isRecording() {
-        return mediaRecord != null;
+        return MediaRecord.getIsRunning();
     }
 
-    public void record() {
-        if (mediaRecord == null) {
-            mediaRecord = new MediaRecord(this);
-            mediaRecord.start(decoderRenderer.getInitialWidth(), decoderRenderer.getInitialHeight(), eglHelper.getEglCtx(), drawer.getTex_id());
-            Toast.makeText(Game.this, getString(R.string.start_record), Toast.LENGTH_LONG).show();
-        } else {
-            boolean ret = mediaRecord.stop();
-            File recordFile = mediaRecord.getFile();
-            mediaRecord = null;
-            if (ret) {
-                new Thread(() -> {
-                    MediaUtils.INSTANCE.insertVideo(this, recordFile, "record");
-                    runOnUiThread(() -> Toast.makeText(Game.this, getString(R.string.record_saved), Toast.LENGTH_LONG).show());
-                }).start();
-            } else {
-                Toast.makeText(Game.this, getString(R.string.record_fail), Toast.LENGTH_LONG).show();
-            }
-        }
-
+    public void startRecord() {
+        mediaRecord.start(this, decoderRenderer.getInitialWidth(), decoderRenderer.getInitialHeight(), eglHelper.getEglCtx(), drawer.getTex_id());
+        Toast.makeText(Game.this, getString(R.string.start_record), Toast.LENGTH_LONG).show();
     }
 
     private void screenshot() {
@@ -3425,6 +3426,7 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
                     }
                 }, glHandler);
                 surface = new Surface(surfaceTexture);
+                mediaRecord = new MediaRecord();
                 break;
             case EGL_DESTROY:
                 if (attemptedConnection) {
@@ -3451,9 +3453,7 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
                 drawer.glDraw();
                 eglHelper.swapBuffers();
                 surfaceTexture.updateTexImage();
-                if (mediaRecord != null) {
-                    mediaRecord.updateVideo();
-                }
+                mediaRecord.updateVideo();
                 break;
             case EGL_READ_PIXELS:
                 int width = streamView.getWidth();
@@ -3488,8 +3488,6 @@ public class Game extends FragmentActivity implements SurfaceHolder.Callback,
 
     @Override
     public void decodedAudio(short[] audioData) {
-        if (mediaRecord != null) {
-            mediaRecord.writeAudio(audioData);
-        }
+        mediaRecord.writeAudio(audioData);
     }
 }

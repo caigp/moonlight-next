@@ -447,7 +447,7 @@ class GameMenuPanel(
                 label,
                 false,
                 Icons.Default.OndemandVideo
-            ) { game.preRecord() })
+            ) { game.preStartOrStopRecord() })
 
         options.add(CancelMenuOption())
 

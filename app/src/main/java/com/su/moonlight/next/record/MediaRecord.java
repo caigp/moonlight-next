@@ -16,6 +16,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MediaRecord implements IMediaRecord, Runnable {
     private static final String TAG = "MediaRecord";
@@ -23,8 +24,6 @@ public class MediaRecord implements IMediaRecord, Runnable {
 
     private AudioEncoder audioEncoder;
     private VideoEncoder videoEncoder;
-
-    private final Context context;
     public static final int FLAG_AUDIO = 0X01;
     public static final int FLAG_VIDEO = 0X10;
 
@@ -38,11 +37,12 @@ public class MediaRecord implements IMediaRecord, Runnable {
 
     private final ArrayBlockingQueue<Sample> sampleQueue = new ArrayBlockingQueue<>(1024);
 
-    public MediaRecord(Context context) {
-        this.context = context;
+    private static final AtomicBoolean isRunning = new AtomicBoolean(false);
+
+    public MediaRecord() {
     }
 
-    public void start(int width, int height, EGLContext eglContext, int texture) {
+    public void start(Context context, int width, int height, EGLContext eglContext, int texture) {
         Log.d(TAG, "开始录像...");
         if (muxer == null) {
             file = new File(context.getExternalCacheDir(), "record_" + System.currentTimeMillis());
@@ -69,6 +69,8 @@ public class MediaRecord implements IMediaRecord, Runnable {
                 videoEncoder.start(eglContext, texture);
             }
         }
+
+        isRunning.set(true);
     }
 
     @Override
@@ -95,6 +97,8 @@ public class MediaRecord implements IMediaRecord, Runnable {
     }
 
     public boolean stop() {
+        isRunning.set(false);
+        currentConfig = 0;
         boolean ret = false;
 
         if (audioEncoder != null) {
@@ -129,39 +133,23 @@ public class MediaRecord implements IMediaRecord, Runnable {
         return ret;
     }
 
-    /**
-     * 这里很重要，如果添加了音频轨道却没有任何音频输入会无法正常结束
-     */
-    private void checkNeedAudio(boolean hasAudio) {
-        if ((CONFIG & FLAG_AUDIO) == FLAG_AUDIO) {
-            if (!hasAudio) {
-                //随便写点东西
-                ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[1]);
-                MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-                bufferInfo.size = 1;
-                bufferInfo.presentationTimeUs = getPTSUs();
-                try {
-                    muxer.writeSampleData(audioTrackIndex, byteBuffer, bufferInfo);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-
     protected long getPTSUs() {
         return System.nanoTime() / 1000L;
     }
 
     public void writeAudio(short[] ss) {
-        if (audioEncoder != null) {
-            audioEncoder.write(ss);
+        if (isRunning.get()) {
+            if (audioEncoder != null) {
+                audioEncoder.write(ss);
+            }
         }
     }
 
     public void updateVideo() {
-        if (videoEncoder != null) {
-            videoEncoder.draw();
+        if (isRunning.get()) {
+            if (videoEncoder != null) {
+                videoEncoder.draw();
+            }
         }
     }
 
@@ -193,6 +181,10 @@ public class MediaRecord implements IMediaRecord, Runnable {
             }
         }
         return null;
+    }
+
+    public static boolean getIsRunning() {
+        return isRunning.get();
     }
 
     @Override
